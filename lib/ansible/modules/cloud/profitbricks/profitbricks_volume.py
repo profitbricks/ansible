@@ -23,7 +23,7 @@ DOCUMENTATION = '''
 module: profitbricks_volume
 short_description: Create or destroy a volume.
 description:
-     - Allows you to create or remove a volume from a ProfitBricks datacenter. This module has a dependency on profitbricks >= 1.0.0
+     - Allows you to create or remove a volume from a ProfitBricks datacenter.
 version_added: "2.0"
 options:
   datacenter:
@@ -53,12 +53,12 @@ options:
     description:
       - Password set for the administrative user.
     required: false
-    version_added: '2.2'
+    version_added: "2.2"
   ssh_keys:
     description:
       - Public SSH keys allowing access to the virtual machine.
     required: false
-    version_added: '2.2'
+    version_added: "2.2"
   disk_type:
     description:
       - The disk type of the volume.
@@ -71,6 +71,13 @@ options:
     required: false
     default: UNKNOWN
     choices: ["LINUX", "WINDOWS", "UNKNOWN" , "OTHER"]
+  availability_zone:
+    description:
+      - The storage availability zone assigned to the volume.
+    required: false
+    default: None
+    choices: [ "AUTO", "ZONE_1", "ZONE_2", "ZONE_3" ]
+    version_added: "2.3"
   count:
     description:
       - The number of volumes you wish to create.
@@ -87,11 +94,11 @@ options:
     required: false
   subscription_user:
     description:
-      - The ProfitBricks username. Overrides the PB_SUBSCRIPTION_ID environment variable.
+      - The ProfitBricks username. Overrides the PROFITBRICKS_USERNAME environement variable.
     required: false
   subscription_password:
     description:
-      - THe ProfitBricks password. Overrides the PB_PASSWORD environment variable.
+      - THe ProfitBricks password. Overrides the PROFITBRICKS_PASSWORD environement variable.
     required: false
   wait:
     description:
@@ -107,11 +114,15 @@ options:
     description:
       - create or terminate datacenters
     required: false
-    default: 'present'
+    default: "present"
     choices: ["present", "absent"]
 
-requirements: [ "profitbricks" ]
-author: Matt Baldwin (baldwin@stackpointcloud.com)
+requirements:
+    - "python >= 2.6"
+    - "profitbricks >= 3.0.0"
+author:
+    - "Matt Baldwin (baldwin@stackpointcloud.com)"
+    - "Ethan Devenport (@edevenport)"
 '''
 
 EXAMPLES = '''
@@ -139,18 +150,27 @@ EXAMPLES = '''
 '''
 
 import re
+import uuid
 import time
 
 HAS_PB_SDK = True
 
 try:
+    from profitbricks import __version__ as sdk_version
     from profitbricks.client import ProfitBricksService, Volume
 except ImportError:
     HAS_PB_SDK = False
 
-from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.pycompat24 import get_exception
+DISK_TYPES = ['HDD',
+              'SSD']
 
+BUS_TYPES = ['VIRTIO',
+             'IDE']
+
+AVAILABILITY_ZONES = ['AUTO',
+                      'ZONE_1',
+                      'ZONE_2',
+                      'ZONE_3']
 
 uuid_match = re.compile(
     '[\w]{8}-[\w]{4}-[\w]{4}-[\w]{4}-[\w]{12}', re.I)
@@ -185,6 +205,7 @@ def _create_volume(module, profitbricks, datacenter, name):
     image_password = module.params.get('image_password')
     ssh_keys = module.params.get('ssh_keys')
     disk_type = module.params.get('disk_type')
+    availability_zone = module.params.get('availability_zone')
     licence_type = module.params.get('licence_type')
     wait_timeout = module.params.get('wait_timeout')
     wait = module.params.get('wait')
@@ -198,7 +219,8 @@ def _create_volume(module, profitbricks, datacenter, name):
             image_password=image_password,
             ssh_keys=ssh_keys,
             disk_type=disk_type,
-            licence_type=licence_type
+            licence_type=licence_type,
+            availability_zone=availability_zone
             )
 
         volume_response = profitbricks.create_volume(datacenter, v)
@@ -260,8 +282,7 @@ def create_volume(module, profitbricks):
 
         try:
             name % 0
-        except TypeError:
-            e = get_exception()
+        except TypeError, e:
             if e.message.startswith('not all'):
                 name = '%s%%d' % name
             else:
@@ -362,39 +383,41 @@ def _attach_volume(module, profitbricks, datacenter, volume):
 
         try:
             return profitbricks.attach_volume(datacenter, server, volume)
-        except Exception:
-            e = get_exception()
+        except Exception as e:
             module.fail_json(msg='failed to attach volume: %s' % str(e))
 
 
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            datacenter=dict(),
-            server=dict(),
-            name=dict(),
+            datacenter=dict(type='str'),
+            server=dict(type='str'),
+            name=dict(type='str'),
             size=dict(type='int', default=10),
-            bus=dict(choices=['VIRTIO', 'IDE'], default='VIRTIO'),
-            image=dict(),
-            image_password=dict(default=None),
+            image=dict(type='str'),
+            image_password=dict(type='str', default=None),
             ssh_keys=dict(type='list', default=[]),
-            disk_type=dict(choices=['HDD', 'SSD'], default='HDD'),
-            licence_type=dict(default='UNKNOWN'),
+            bus=dict(type='str', choices=BUS_TYPES, default='VIRTIO'),
+            disk_type=dict(type='str', choices=DISK_TYPES, default='HDD'),
+            licence_type=dict(type='str', default='UNKNOWN'),
+            availability_zone=dict(type='str', choices=AVAILABILITY_ZONES, default=None),
             count=dict(type='int', default=1),
             auto_increment=dict(type='bool', default=True),
             instance_ids=dict(type='list', default=[]),
-            subscription_user=dict(),
-            subscription_password=dict(),
+            subscription_user=dict(type='str', default=os.environ.get('PROFITBRICKS_USERNAME')),
+            subscription_password=dict(type='str', default=os.environ.get('PROFITBRICKS_PASSWORD')),
             wait=dict(type='bool', default=True),
             wait_timeout=dict(type='int', default=600),
-            state=dict(default='present'),
+            state=dict(type='str', default='present'),
         )
     )
 
     if not module.params.get('subscription_user'):
-        module.fail_json(msg='subscription_user parameter is required')
+        module.fail_json(msg='subscription_user parameter or ' +
+            'PROFITBRICKS_USERNAME environment variable is required.')
     if not module.params.get('subscription_password'):
-        module.fail_json(msg='subscription_password parameter is required')
+        module.fail_json(msg='subscription_password parameter or ' +
+            'PROFITBRICKS_PASSWORD environment variable is required.')
 
     subscription_user = module.params.get('subscription_user')
     subscription_password = module.params.get('subscription_password')
@@ -402,6 +425,9 @@ def main():
     profitbricks = ProfitBricksService(
         username=subscription_user,
         password=subscription_password)
+
+    user_agent = 'profitbricks-sdk-ruby/%s Ansible/%s' % (sdk_version, __version__)
+    profitbricks.headers = {'User-Agent': user_agent}
 
     state = module.params.get('state')
 
@@ -412,8 +438,7 @@ def main():
         try:
             (changed) = delete_volume(module, profitbricks)
             module.exit_json(changed=changed)
-        except Exception:
-            e = get_exception()
+        except Exception as e:
             module.fail_json(msg='failed to set volume state: %s' % str(e))
 
     elif state == 'present':
@@ -425,10 +450,11 @@ def main():
         try:
             (volume_dict_array) = create_volume(module, profitbricks)
             module.exit_json(**volume_dict_array)
-        except Exception:
-            e = get_exception()
+        except Exception as e:
             module.fail_json(msg='failed to set volume state: %s' % str(e))
 
+from ansible import __version__
+from ansible.module_utils.basic import *
 
 if __name__ == '__main__':
     main()

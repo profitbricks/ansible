@@ -23,7 +23,7 @@ DOCUMENTATION = '''
 module: profitbricks
 short_description: Create, destroy, start, stop, and reboot a ProfitBricks virtual machine.
 description:
-     - Create, destroy, update, start, stop, and reboot a ProfitBricks virtual machine. When the virtual machine is created it can optionally wait for it to be 'running' before returning. This module has a dependency on profitbricks >= 1.0.0
+     - Create, destroy, update, start, stop, and reboot a ProfitBricks virtual machine. When the virtual machine is created it can optionally wait for it to be 'running' before returning.
 version_added: "2.0"
 options:
   auto_increment:
@@ -43,12 +43,19 @@ options:
     description:
       - Password set for the administrative user.
     required: false
-    version_added: '2.2'
+    version_added: "2.2"
   ssh_keys:
     description:
       - Public SSH keys allowing access to the virtual machine.
     required: false
-    version_added: '2.2'
+    version_added: "2.2"
+  volume_availability_zone:
+    description:
+      - The storage availability zone assigned to the volume.
+    required: false
+    default: None
+    choices: [ "AUTO", "ZONE_1", "ZONE_2", "ZONE_3" ]
+    version_added: "2.3"
   datacenter:
     description:
       - The datacenter to provision this virtual machine.
@@ -70,7 +77,14 @@ options:
     required: false
     default: AMD_OPTERON
     choices: [ "AMD_OPTERON", "INTEL_XEON" ]
-    version_added: '2.2'
+    version_added: "2.2"
+  availability_zone:
+    description:
+      - The availability zone assigned to the server.
+    required: false
+    default: AUTO
+    choices: [ "AUTO", "ZONE_1", "ZONE_2" ]
+    version_added: "2.3"
   volume_size:
     description:
       - The size in GB of the boot volume.
@@ -107,14 +121,20 @@ options:
       - The ID of the LAN you wish to add the servers to.
     required: false
     default: 1
+  nat:
+    description:
+      - Boolean value indicating if the private IP address has outbound access to the public Internet.
+    required: false
+    default: false
+    version_added: "2.3"
   subscription_user:
     description:
-      - The ProfitBricks username. Overrides the PB_SUBSCRIPTION_ID environment variable.
+      - The ProfitBricks username. Overrides the PROFITBRICKS_USERNAME environement variable.
     required: false
     default: null
   subscription_password:
     description:
-      - THe ProfitBricks password. Overrides the PB_PASSWORD environment variable.
+      - THe ProfitBricks password. Overrides the PROFITBRICKS_PASSWORD environement variable.
     required: false
     default: null
   wait:
@@ -137,13 +157,15 @@ options:
     description:
       - create or terminate instances
     required: false
-    default: 'present'
+    default: "present"
     choices: [ "running", "stopped", "absent", "present" ]
 
 requirements:
-     - "profitbricks"
-     - "python >= 2.6"
-author: Matt Baldwin (baldwin@stackpointcloud.com)
+    - "python >= 2.6"
+    - "profitbricks >= 3.0.0"
+author:
+    - "Matt Baldwin (baldwin@stackpointcloud.com)"
+    - "Ethan Devenport (@edevenport)"
 '''
 
 EXAMPLES = '''
@@ -206,17 +228,29 @@ import time
 HAS_PB_SDK = True
 
 try:
-    from profitbricks.client import ProfitBricksService, Volume, Server, Datacenter, NIC, LAN
+    from profitbricks import __version__ as sdk_version
+    from profitbricks.client import (ProfitBricksService, Volume, Server,
+                                    Datacenter, NIC, LAN)
 except ImportError:
     HAS_PB_SDK = False
-
-from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.pycompat24 import get_exception
-
 
 LOCATIONS = ['us/las',
              'de/fra',
              'de/fkb']
+
+CPU_FAMILIES = ['AMD_OPTERON',
+                'INTEL_XEON']
+
+DISK_TYPES = ['HDD',
+              'SSD']
+
+BUS_TYPES = ['VIRTIO',
+             'IDE']
+
+AVAILABILITY_ZONES = ['AUTO',
+                      'ZONE_1',
+                      'ZONE_2',
+                      'ZONE_3']
 
 uuid_match = re.compile(
     '[\w]{8}-[\w]{4}-[\w]{4}-[\w]{4}-[\w]{12}', re.I)
@@ -250,10 +284,13 @@ def _create_machine(module, profitbricks, datacenter, name):
     cpu_family = module.params.get('cpu_family')
     volume_size = module.params.get('volume_size')
     disk_type = module.params.get('disk_type')
+    availability_zone = module.params.get('availability_zone')
+    volume_availability_zone = module.params.get('volume_availability_zone')
     image_password = module.params.get('image_password')
     ssh_keys = module.params.get('ssh_keys')
     bus = module.params.get('bus')
     lan = module.params.get('lan')
+    nat = module.params.get('nat')
     assign_public_ip = module.params.get('assign_public_ip')
     subscription_user = module.params.get('subscription_user')
     subscription_password = module.params.get('subscription_password')
@@ -289,10 +326,13 @@ def _create_machine(module, profitbricks, datacenter, name):
         image_password=image_password,
         ssh_keys=ssh_keys,
         disk_type=disk_type,
-        bus=bus)
+        availability_zone=volume_availability_zone,
+        bus=bus
+        )
 
     n = NIC(
         name=str(uuid.uuid4()).replace('-', '')[:10],
+        nat=nat,
         lan=int(lan)
         )
 
@@ -301,6 +341,7 @@ def _create_machine(module, profitbricks, datacenter, name):
         ram=ram,
         cores=cores,
         cpu_family=cpu_family,
+        availability_zone=availability_zone,
         create_volumes=[v],
         nics=[n],
         )
@@ -335,7 +376,7 @@ def _startstop_machine(module, profitbricks, datacenter_id, server_id):
 
         return True
     except Exception as e:
-        module.fail_json(msg="failed to start or stop the virtual machine %s at %s: %s" % (server_id, datacenter_id, str(e)))
+        module.fail_json(msg="failed to start or stop the virtual machine %s: %s" % (name, str(e)))
 
 
 def _create_datacenter(module, profitbricks):
@@ -374,6 +415,7 @@ def create_virtual_machine(module, profitbricks):
     auto_increment = module.params.get('auto_increment')
     count = module.params.get('count')
     lan = module.params.get('lan')
+    nat = module.params.get('nat')
     wait_timeout = module.params.get('wait_timeout')
     failed = True
     datacenter_found = False
@@ -400,8 +442,7 @@ def create_virtual_machine(module, profitbricks):
 
         try:
             name % 0
-        except TypeError:
-            e = get_exception()
+        except TypeError, e:
             if e.message.startswith('not all'):
                 name = '%s%%d' % name
             else:
@@ -486,8 +527,7 @@ def remove_virtual_machine(module, profitbricks):
             # Remove the server
             try:
                 server_response = profitbricks.delete_server(datacenter_id, server_id)
-            except Exception:
-                e = get_exception()
+            except Exception as e:
                 module.fail_json(msg="failed to terminate the virtual server: %s" % str(e))
             else:
                 changed = True
@@ -503,8 +543,7 @@ def _remove_boot_volume(module, profitbricks, datacenter_id, server_id):
         server = profitbricks.get_server(datacenter_id, server_id)
         volume_id = server['properties']['bootVolume']['id']
         volume_response = profitbricks.delete_volume(datacenter_id, volume_id)
-    except Exception:
-        e = get_exception()
+    except Exception as e:
         module.fail_json(msg="failed to remove the server's boot volume: %s" % str(e))
 
 
@@ -590,42 +629,56 @@ def _get_server_id(servers, identity):
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            datacenter=dict(),
-            name=dict(),
-            image=dict(),
+            datacenter=dict(type='str'),
+            name=dict(type='str'),
+            image=dict(type='str'),
             cores=dict(type='int', default=2),
             ram=dict(type='int', default=2048),
-            cpu_family=dict(choices=['AMD_OPTERON', 'INTEL_XEON'],
-                            default='AMD_OPTERON'),
+            cpu_family=dict(type='str', choices=CPU_FAMILIES, default='AMD_OPTERON'),
             volume_size=dict(type='int', default=10),
-            disk_type=dict(choices=['HDD', 'SSD'], default='HDD'),
-            image_password=dict(default=None),
+            disk_type=dict(type='str', choices=DISK_TYPES, default='HDD'),
+            availability_zone=dict(type='str', choices=AVAILABILITY_ZONES, default='AUTO'),
+            volume_availability_zone=dict(type='str', choices=AVAILABILITY_ZONES, default=None),
+            image_password=dict(type='str', default=None),
             ssh_keys=dict(type='list', default=[]),
-            bus=dict(choices=['VIRTIO', 'IDE'], default='VIRTIO'),
+            bus=dict(type='str', choices=BUS_TYPES, default='VIRTIO'),
             lan=dict(type='int', default=1),
+            nat=dict(type='bool', default=None),
             count=dict(type='int', default=1),
             auto_increment=dict(type='bool', default=True),
             instance_ids=dict(type='list', default=[]),
-            subscription_user=dict(),
-            subscription_password=dict(),
-            location=dict(choices=LOCATIONS, default='us/las'),
+            subscription_user=dict(type='str', default=os.environ.get('PROFITBRICKS_USERNAME')),
+            subscription_password=dict(type='str', default=os.environ.get('PROFITBRICKS_PASSWORD')),
+            location=dict(type='str', choices=LOCATIONS, default='us/las'),
             assign_public_ip=dict(type='bool', default=False),
             wait=dict(type='bool', default=True),
             wait_timeout=dict(type='int', default=600),
             remove_boot_volume=dict(type='bool', default=True),
-            state=dict(default='present'),
+            state=dict(type='str', default='present'),
         )
     )
 
     if not HAS_PB_SDK:
         module.fail_json(msg='profitbricks required for this module')
 
+    if not module.params.get('subscription_user'):
+        module.fail_json(msg='subscription_user parameter or ' +
+            'PROFITBRICKS_USERNAME environment variable is required.')
+    if not module.params.get('subscription_password'):
+        module.fail_json(msg='subscription_password parameter or ' +
+            'PROFITBRICKS_PASSWORD environment variable is required.')
+
     subscription_user = module.params.get('subscription_user')
     subscription_password = module.params.get('subscription_password')
+    wait = module.params.get('wait')
+    wait_timeout = module.params.get('wait_timeout')
 
     profitbricks = ProfitBricksService(
         username=subscription_user,
         password=subscription_password)
+
+    user_agent = 'profitbricks-sdk-ruby/%s Ansible/%s' % (sdk_version, __version__)
+    profitbricks.headers = {'User-Agent': user_agent}
 
     state = module.params.get('state')
 
@@ -637,8 +690,7 @@ def main():
         try:
             (changed) = remove_virtual_machine(module, profitbricks)
             module.exit_json(changed=changed)
-        except Exception:
-            e = get_exception()
+        except Exception as e:
             module.fail_json(msg='failed to set instance state: %s' % str(e))
 
     elif state in ('running', 'stopped'):
@@ -648,8 +700,7 @@ def main():
         try:
             (changed) = startstop_machine(module, profitbricks, state)
             module.exit_json(changed=changed)
-        except Exception:
-            e = get_exception()
+        except Exception as e:
             module.fail_json(msg='failed to set instance state: %s' % str(e))
 
     elif state == 'present':
@@ -657,20 +708,15 @@ def main():
             module.fail_json(msg='name parameter is required for new instance')
         if not module.params.get('image'):
             module.fail_json(msg='image parameter is required for new instance')
-        if not module.params.get('subscription_user'):
-            module.fail_json(msg='subscription_user parameter is ' +
-                'required for new instance')
-        if not module.params.get('subscription_password'):
-            module.fail_json(msg='subscription_password parameter is ' +
-                'required for new instance')
 
         try:
             (machine_dict_array) = create_virtual_machine(module, profitbricks)
             module.exit_json(**machine_dict_array)
-        except Exception:
-            e = get_exception()
+        except Exception as e:
             module.fail_json(msg='failed to set instance state: %s' % str(e))
 
+from ansible import __version__
+from ansible.module_utils.basic import *
 
 if __name__ == '__main__':
     main()

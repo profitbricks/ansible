@@ -23,8 +23,8 @@ DOCUMENTATION = '''
 module: profitbricks_firewall_rule
 short_description: Create or remove a firewall rule.
 description:
-     - This module allows you to create or remove a firewlal rule. This module has a dependency on profitbricks >= 1.0.0
-version_added: "2.3"
+     - This module allows you to create or remove a firewlal rule.
+version_added: "2.2"
 options:
   datacenter:
     description:
@@ -77,11 +77,11 @@ options:
     required: false
   subscription_user:
     description:
-      - The ProfitBricks username. Overrides the PB_SUBSCRIPTION_ID environement variable.
+      - The ProfitBricks username. Overrides the PROFITBRICKS_USERNAME environement variable.
     required: false
   subscription_password:
     description:
-      - THe ProfitBricks password. Overrides the PB_PASSWORD environement variable.
+      - The ProfitBricks password. Overrides the PROFITBRICKS_PASSWORD environement variable.
     required: false
   wait:
     description:
@@ -97,11 +97,15 @@ options:
     description:
       - Indicate desired state of the resource
     required: false
-    default: 'present'
+    default: "present"
     choices: ["present", "absent"]
 
-requirements: [ "profitbricks" ]
-author: Ethan Devenport (ethand@stackpointcloud.com)
+requirements:
+    - "python >= 2.6"
+    - "profitbricks >= 3.0.0"
+author:
+    - "Matt Baldwin (baldwin@stackpointcloud.com)"
+    - "Ethan Devenport (@edevenport)"
 '''
 
 EXAMPLES = '''
@@ -200,9 +204,14 @@ import time
 HAS_PB_SDK = True
 
 try:
+    from profitbricks import __version__ as sdk_version
     from profitbricks.client import ProfitBricksService, FirewallRule
 except ImportError:
     HAS_PB_SDK = False
+
+PROTOCOLS = ['TCP',
+             'UDP',
+             'ICMP']
 
 
 def _wait_for_completion(profitbricks, promise, wait_timeout, msg):
@@ -356,8 +365,7 @@ def main():
             server=dict(type='str', required=True),
             nic=dict(type='str', required=True),
             name=dict(type='str', required=True),
-            protocol=dict(type='str', choices=['TCP', 'UDP', 'ICMP'],
-                          required=False),
+            protocol=dict(type='str', choices=PROTOCOLS, required=False),
             source_mac=dict(type='str', default=None),
             source_ip=dict(type='str', default=None),
             target_ip=dict(type='str', default=None),
@@ -365,16 +373,23 @@ def main():
             port_range_end=dict(type='int', default=None),
             icmp_type=dict(type='int', default=None),
             icmp_code=dict(type='int', default=None),
-            subscription_user=dict(type='str', required=True),
-            subscription_password=dict(type='str', required=True),
+            subscription_user=dict(type='str', default=os.environ.get('PROFITBRICKS_USERNAME')),
+            subscription_password=dict(type='str', default=os.environ.get('PROFITBRICKS_PASSWORD')),
             wait=dict(type='bool', default=True),
             wait_timeout=dict(type='int', default=600),
-            state=dict(default='present'),
+            state=dict(type='str', default='present'),
         )
     )
 
     if not HAS_PB_SDK:
         module.fail_json(msg='profitbricks required for this module')
+
+    if not module.params.get('subscription_user'):
+        module.fail_json(msg='subscription_user parameter or ' +
+            'PROFITBRICKS_USERNAME environment variable is required.')
+    if not module.params.get('subscription_password'):
+        module.fail_json(msg='subscription_password parameter or ' +
+            'PROFITBRICKS_PASSWORD environment variable is required.')
 
     subscription_user = module.params.get('subscription_user')
     subscription_password = module.params.get('subscription_password')
@@ -382,6 +397,9 @@ def main():
     profitbricks = ProfitBricksService(
         username=subscription_user,
         password=subscription_password)
+
+    user_agent = 'profitbricks-sdk-ruby/%s Ansible/%s' % (sdk_version, __version__)
+    profitbricks.headers = {'User-Agent': user_agent}
 
     state = module.params.get('state')
 
@@ -399,6 +417,7 @@ def main():
         except Exception as e:
             module.fail_json(msg='failed to set firewall rules state: %s' % str(e))
 
+from ansible import __version__
 from ansible.module_utils.basic import *
 
 if __name__ == '__main__':

@@ -23,7 +23,7 @@ DOCUMENTATION = '''
 module: profitbricks_nic
 short_description: Create or Remove a NIC.
 description:
-     - This module allows you to create or restore a volume snapshot. This module has a dependency on profitbricks >= 1.0.0
+     - This module allows you to create or restore a volume snapshot.
 version_added: "2.0"
 options:
   datacenter:
@@ -42,13 +42,19 @@ options:
     description:
       - The LAN to place the NIC on. You can pass a LAN that doesn't exist and it will be created. Required on create.
     required: true
+  nat:
+    description:
+      - Boolean value indicating if the private IP address has outbound access to the public internet.
+    required: false
+    default: false
+    version_added: "2.3"
   subscription_user:
     description:
-      - The ProfitBricks username. Overrides the PB_SUBSCRIPTION_ID environment variable.
+      - The ProfitBricks username. Overrides the PROFITBRICKS_USERNAME environement variable.
     required: false
   subscription_password:
     description:
-      - THe ProfitBricks password. Overrides the PB_PASSWORD environment variable.
+      - The ProfitBricks password. Overrides the PROFITBRICKS_PASSWORD environement variable.
     required: false
   wait:
     description:
@@ -64,11 +70,15 @@ options:
     description:
       - Indicate desired state of the resource
     required: false
-    default: 'present'
+    default: "present"
     choices: ["present", "absent"]
 
-requirements: [ "profitbricks" ]
-author: Matt Baldwin (baldwin@stackpointcloud.com)
+requirements:
+    - "python >= 2.6"
+    - "profitbricks >= 3.0.0"
+author:
+    - "Matt Baldwin (baldwin@stackpointcloud.com)"
+    - "Ethan Devenport (@edevenport)"
 '''
 
 EXAMPLES = '''
@@ -98,6 +108,7 @@ import time
 HAS_PB_SDK = True
 
 try:
+    from profitbricks import __version__ as sdk_version
     from profitbricks.client import ProfitBricksService, NIC
 except ImportError:
     HAS_PB_SDK = False
@@ -140,6 +151,7 @@ def create_nic(module, profitbricks):
     datacenter = module.params.get('datacenter')
     server = module.params.get('server')
     lan = module.params.get('lan')
+    nat = module.params.get('nat')
     name = module.params.get('name')
     wait = module.params.get('wait')
     wait_timeout = module.params.get('wait_timeout')
@@ -163,7 +175,8 @@ def create_nic(module, profitbricks):
     try:
         n = NIC(
             name=name,
-            lan=lan
+            lan=lan,
+            nat=nat
         )
 
         nic_response = profitbricks.create_nic(datacenter, server, n)
@@ -235,15 +248,16 @@ def delete_nic(module, profitbricks):
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            datacenter=dict(),
-            server=dict(),
-            name=dict(default=str(uuid.uuid4()).replace('-','')[:10]),
-            lan=dict(),
-            subscription_user=dict(),
-            subscription_password=dict(),
+            datacenter=dict(type='str'),
+            server=dict(type='str'),
+            name=dict(type='str', default=str(uuid.uuid4()).replace('-', '')[:10]),
+            lan=dict(type='int'),
+            nat=dict(type='bool', default=False),
+            subscription_user=dict(type='str', default=os.environ.get('PROFITBRICKS_USERNAME')),
+            subscription_password=dict(type='str', default=os.environ.get('PROFITBRICKS_PASSWORD')),
             wait=dict(type='bool', default=True),
             wait_timeout=dict(type='int', default=600),
-            state=dict(default='present'),
+            state=dict(type='str', default='present'),
         )
     )
 
@@ -251,14 +265,15 @@ def main():
         module.fail_json(msg='profitbricks required for this module')
 
     if not module.params.get('subscription_user'):
-        module.fail_json(msg='subscription_user parameter is required')
+        module.fail_json(msg='subscription_user parameter or ' +
+            'PROFITBRICKS_USERNAME environment variable is required.')
     if not module.params.get('subscription_password'):
-        module.fail_json(msg='subscription_password parameter is required')
+        module.fail_json(msg='subscription_password parameter or ' +
+            'PROFITBRICKS_PASSWORD environment variable is required.')
     if not module.params.get('datacenter'):
         module.fail_json(msg='datacenter parameter is required')
     if not module.params.get('server'):
         module.fail_json(msg='server parameter is required')
-
 
     subscription_user = module.params.get('subscription_user')
     subscription_password = module.params.get('subscription_password')
@@ -266,6 +281,9 @@ def main():
     profitbricks = ProfitBricksService(
         username=subscription_user,
         password=subscription_password)
+
+    user_agent = 'profitbricks-sdk-ruby/%s Ansible/%s' % (sdk_version, __version__)
+    profitbricks.headers = {'User-Agent': user_agent}
 
     state = module.params.get('state')
 
@@ -289,6 +307,7 @@ def main():
         except Exception as e:
             module.fail_json(msg='failed to set nic state: %s' % str(e))
 
+from ansible import __version__
 from ansible.module_utils.basic import *
 
 if __name__ == '__main__':

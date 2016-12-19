@@ -23,7 +23,7 @@ DOCUMENTATION = '''
 module: profitbricks_datacenter
 short_description: Create or destroy a ProfitBricks Virtual Datacenter.
 description:
-     - This is a simple module that supports creating or removing vDCs. A vDC is required before you can create servers. This module has a dependency on profitbricks >= 1.0.0
+     - This is a simple module that supports creating or removing vDCs. A vDC is required before you can create servers.
 version_added: "2.0"
 options:
   name:
@@ -42,11 +42,11 @@ options:
     choices: [ "us/las", "de/fra", "de/fkb" ]
   subscription_user:
     description:
-      - The ProfitBricks username. Overrides the PB_SUBSCRIPTION_ID environment variable.
+      - The ProfitBricks username. Overrides the PROFITBRICKS_USERNAME environement variable.
     required: false
   subscription_password:
     description:
-      - THe ProfitBricks password. Overrides the PB_PASSWORD environment variable.
+      - THe ProfitBricks password. Overrides the PROFITBRICKS_PASSWORD environement variable.
     required: false
   wait:
     description:
@@ -62,11 +62,15 @@ options:
     description:
       - create or terminate datacenters
     required: false
-    default: 'present'
+    default: "present"
     choices: [ "present", "absent" ]
 
-requirements: [ "profitbricks" ]
-author: Matt Baldwin (baldwin@stackpointcloud.com)
+requirements:
+    - "python >= 2.6"
+    - "profitbricks >= 3.0.0"
+author:
+    - "Matt Baldwin (baldwin@stackpointcloud.com)"
+    - "Ethan Devenport (@edevenport)"
 '''
 
 EXAMPLES = '''
@@ -76,7 +80,7 @@ EXAMPLES = '''
     datacenter: Tardis One
     wait_timeout: 500
 
-# Destroy a Datacenter. This will remove all servers, volumes, and other objects in the datacenter. 
+# Destroy a Datacenter. This will remove all servers, volumes, and other objects in the datacenter.
 - profitbricks_datacenter:
     datacenter: Tardis One
     wait_timeout: 500
@@ -92,6 +96,7 @@ import sys
 HAS_PB_SDK = True
 
 try:
+    from profitbricks import __version__ as sdk_version
     from profitbricks.client import ProfitBricksService, Datacenter
 except ImportError:
     HAS_PB_SDK = False
@@ -125,11 +130,13 @@ def _wait_for_completion(profitbricks, promise, wait_timeout, msg):
             promise['requestId']
             ) + '" to complete.')
 
+
 def _remove_datacenter(module, profitbricks, datacenter):
     try:
         profitbricks.delete_datacenter(datacenter)
     except Exception as e:
         module.fail_json(msg="failed to remove the datacenter: %s" % str(e))
+
 
 def create_datacenter(module, profitbricks):
     """
@@ -149,7 +156,6 @@ def create_datacenter(module, profitbricks):
     wait = module.params.get('wait')
     wait_timeout = int(module.params.get('wait_timeout'))
     virtual_datacenters = []
-
 
     i = Datacenter(
         name=name,
@@ -173,11 +179,12 @@ def create_datacenter(module, profitbricks):
     except Exception as e:
         module.fail_json(msg="failed to create the new datacenter: %s" % str(e))
 
+
 def remove_datacenter(module, profitbricks):
     """
     Removes a Datacenter.
 
-    This will remove a datacenter. 
+    This will remove a datacenter.
 
     module : AnsibleModule object
     profitbricks: authenticated profitbricks object.
@@ -204,26 +211,29 @@ def remove_datacenter(module, profitbricks):
 
     return changed
 
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            name=dict(),
-            description=dict(),
-            location=dict(choices=LOCATIONS, default='us/las'),
-            subscription_user=dict(),
-            subscription_password=dict(),
+            name=dict(type='str'),
+            description=dict(type='str'),
+            location=dict(type='str', choices=LOCATIONS, default='us/las'),
+            subscription_user=dict(type='str', default=os.environ.get('PROFITBRICKS_USERNAME')),
+            subscription_password=dict(type='str', default=os.environ.get('PROFITBRICKS_PASSWORD')),
             wait=dict(type='bool', default=True),
-            wait_timeout=dict(default=600),
-            state=dict(default='present'),
+            wait_timeout=dict(type='int', default=600),
+            state=dict(type='str', default='present'),
         )
     )
     if not HAS_PB_SDK:
         module.fail_json(msg='profitbricks required for this module')
 
     if not module.params.get('subscription_user'):
-        module.fail_json(msg='subscription_user parameter is required')
+        module.fail_json(msg='subscription_user parameter or ' +
+            'PROFITBRICKS_USERNAME environment variable is required.')
     if not module.params.get('subscription_password'):
-        module.fail_json(msg='subscription_password parameter is required')
+        module.fail_json(msg='subscription_password parameter or ' +
+            'PROFITBRICKS_PASSWORD environment variable is required.')
 
     subscription_user = module.params.get('subscription_user')
     subscription_password = module.params.get('subscription_password')
@@ -231,6 +241,9 @@ def main():
     profitbricks = ProfitBricksService(
         username=subscription_user,
         password=subscription_password)
+
+    user_agent = 'profitbricks-sdk-ruby/%s Ansible/%s' % (sdk_version, __version__)
+    profitbricks.headers = {'User-Agent': user_agent}
 
     state = module.params.get('state')
 
@@ -257,6 +270,7 @@ def main():
         except Exception as e:
             module.fail_json(msg='failed to set datacenter state: %s' % str(e))
 
+from ansible import __version__
 from ansible.module_utils.basic import *
 
 if __name__ == '__main__':

@@ -23,7 +23,7 @@ DOCUMENTATION = '''
 module: profitbricks_volume_attachments
 short_description: Attach or detach a volume.
 description:
-     - Allows you to attach or detach a volume from a ProfitBricks server. This module has a dependency on profitbricks >= 1.0.0
+     - Allows you to attach or detach a volume from a ProfitBricks server.
 version_added: "2.0"
 options:
   datacenter:
@@ -40,11 +40,11 @@ options:
     required: true
   subscription_user:
     description:
-      - The ProfitBricks username. Overrides the PB_SUBSCRIPTION_ID environment variable.
+      - The ProfitBricks username. Overrides the PROFITBRICKS_USERNAME environement variable.
     required: false
   subscription_password:
     description:
-      - THe ProfitBricks password. Overrides the PB_PASSWORD environment variable.
+      - THe ProfitBricks password. Overrides the PROFITBRICKS_PASSWORD environement variable.
     required: false
   wait:
     description:
@@ -60,11 +60,15 @@ options:
     description:
       - Indicate desired state of the resource
     required: false
-    default: 'present'
+    default: "present"
     choices: ["present", "absent"]
 
-requirements: [ "profitbricks" ]
-author: Matt Baldwin (baldwin@stackpointcloud.com)
+requirements:
+    - "python >= 2.6"
+    - "profitbricks >= 3.0.0"
+author:
+    - "Matt Baldwin (baldwin@stackpointcloud.com)"
+    - "Ethan Devenport (@edevenport)"
 '''
 
 EXAMPLES = '''
@@ -96,6 +100,7 @@ import time
 HAS_PB_SDK = True
 
 try:
+    from profitbricks import __version__ as sdk_version
     from profitbricks.client import ProfitBricksService, Volume
 except ImportError:
     HAS_PB_SDK = False
@@ -124,6 +129,7 @@ def _wait_for_completion(profitbricks, promise, wait_timeout, msg):
         'Timed out waiting for async operation ' + msg + ' "' + str(
             promise['requestId']
             ) + '" to complete.')
+
 
 def attach_volume(module, profitbricks):
     """
@@ -155,7 +161,7 @@ def attach_volume(module, profitbricks):
         server_list = profitbricks.list_servers(datacenter)
         for s in server_list['items']:
             if server == s['properties']['name']:
-                server= s['id']
+                server = s['id']
                 break
 
     # Locate UUID for Volume
@@ -168,11 +174,12 @@ def attach_volume(module, profitbricks):
 
     return profitbricks.attach_volume(datacenter, server, volume)
 
+
 def detach_volume(module, profitbricks):
     """
     Detaches a volume.
 
-    This will remove a volume from the server. 
+    This will remove a volume from the server.
 
     module : AnsibleModule object
     profitbricks: authenticated profitbricks object.
@@ -198,7 +205,7 @@ def detach_volume(module, profitbricks):
         server_list = profitbricks.list_servers(datacenter)
         for s in server_list['items']:
             if server == s['properties']['name']:
-                server= s['id']
+                server = s['id']
                 break
 
     # Locate UUID for Volume
@@ -211,17 +218,18 @@ def detach_volume(module, profitbricks):
 
     return profitbricks.detach_volume(datacenter, server, volume)
 
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            datacenter=dict(),
-            server=dict(),
-            volume=dict(),
-            subscription_user=dict(),
-            subscription_password=dict(),
+            datacenter=dict(type='str'),
+            server=dict(type='str'),
+            volume=dict(type='str'),
+            subscription_user=dict(type='str', default=os.environ.get('PROFITBRICKS_USERNAME')),
+            subscription_password=dict(type='str', default=os.environ.get('PROFITBRICKS_PASSWORD')),
             wait=dict(type='bool', default=True),
             wait_timeout=dict(type='int', default=600),
-            state=dict(default='present'),
+            state=dict(type='str', default='present'),
         )
     )
 
@@ -229,9 +237,11 @@ def main():
         module.fail_json(msg='profitbricks required for this module')
 
     if not module.params.get('subscription_user'):
-        module.fail_json(msg='subscription_user parameter is required')
+        module.fail_json(msg='subscription_user parameter or ' +
+            'PROFITBRICKS_USERNAME environment variable is required.')
     if not module.params.get('subscription_password'):
-        module.fail_json(msg='subscription_password parameter is required')
+        module.fail_json(msg='subscription_password parameter or ' +
+            'PROFITBRICKS_PASSWORD environment variable is required.')
     if not module.params.get('datacenter'):
         module.fail_json(msg='datacenter parameter is required')
     if not module.params.get('server'):
@@ -245,6 +255,9 @@ def main():
     profitbricks = ProfitBricksService(
         username=subscription_user,
         password=subscription_password)
+
+    user_agent = 'profitbricks-sdk-ruby/%s Ansible/%s' % (sdk_version, __version__)
+    profitbricks.headers = {'User-Agent': user_agent}
 
     state = module.params.get('state')
 
@@ -261,6 +274,7 @@ def main():
         except Exception as e:
             module.fail_json(msg='failed to set volume_attach state: %s' % str(e))
 
+from ansible import __version__
 from ansible.module_utils.basic import *
 
 if __name__ == '__main__':
